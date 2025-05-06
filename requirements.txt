@@ -3,3 +3,5 @@ pandas
 folium
 gtfs_kit
 streamlit-folium
+geopandas
+openpyxl
