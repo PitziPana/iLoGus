@@ -56,28 +56,27 @@ agrupado = trips_con_horario.groupby("shape_id").agg({
 }).reset_index()
 agrupado["num_trips"] = agrupado["trip_id"].apply(len)
 
-# ✅ Función corregida
+# Función para calcular frecuencia media
 def calcular_frecuencia(horas):
-    horas_limpias = [h for h in horas if h and h.strip()]
-    if len(horas_limpias) < 2:
-        return "No disponible"
     try:
-        tiempos = [datetime.strptime(h, "%H:%M:%S") for h in horas_limpias]
+        tiempos = [datetime.strptime(h, "%H:%M:%S") for h in horas if h is not None]
         diferencias = [(t2 - t1).seconds for t1, t2 in zip(tiempos, tiempos[1:])]
-        media = int(round(sum(differences) / len(differences) / 60))
+        if len(diferencias) == 0:
+            return "No disponible"
+        media = int(round(sum(diferencias) / len(diferencias) / 60))
         return f"cada {media} minutos"
-    except Exception:
+    except:
         return "Formato de hora no válido"
 
 # Mostrar recorridos
 for _, row in agrupado.iterrows():
     shape_id = row["shape_id"]
     destino = row["trip_headsign"]
-    horas = sorted(row["departure_time"])
+    horas = sorted([h for h in row["departure_time"] if h is not None])
     frecuencia = calcular_frecuencia(horas)
 
-    st.markdown(f"### 🚌 Línea {route_short_name} · {destino}")
-    st.markdown(f"📆 Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; 🧭 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; ⏱️ Frecuencia media: {frecuencia}")
+    st.markdown(f"### 🚌 Línea {route_short_name} · {nombre_largo}")
+    st.markdown(f"📅 Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; 🚍 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; ⏱️ Frecuencia media: {frecuencia}")
 
     # Mostrar tabla de horarios (12 columnas, sin scroll)
     filas = [horas[i:i+12] for i in range(0, len(horas), 12)]
@@ -104,13 +103,14 @@ for _, row in agrupado.iterrows():
         lon = parada["stop_lon"]
         nombre = parada["stop_name"]
 
-        # Horarios por parada
+        # Recoger horarios teóricos de esa parada
         horarios = feed.stop_times[
             (feed.stop_times["stop_id"] == stop_id) &
             (feed.stop_times["trip_id"].isin(row["trip_id"]))
-        ]["departure_time"].tolist()
+        ]["departure_time"].dropna().tolist()
 
-        minutos = [int(h.split(":")[1]) for h in horarios if h and h.strip()]
+        # Detectar patrón horario
+        minutos = [int(h.split(":")[1]) for h in horarios if h and ":" in h]
         patron = pd.Series(minutos).mode()
         if len(patron) >= 1 and minutos.count(patron[0]) > len(minutos) * 0.6:
             popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Paso aproximado: minuto {patron[0]:02d} de cada hora</span>"
@@ -121,10 +121,10 @@ for _, row in agrupado.iterrows():
 
         folium.CircleMarker(
             location=(lat, lon),
-            radius=4,
+            radius=5,
             color="red",
             fill=True,
-            fill_opacity=0.7,
+            fill_color="red",
             popup=folium.Popup(popup_text, max_width=300)
         ).add_to(mapa)
 
