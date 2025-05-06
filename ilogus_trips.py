@@ -56,14 +56,18 @@ agrupado = trips_con_horario.groupby("shape_id").agg({
 }).reset_index()
 agrupado["num_trips"] = agrupado["trip_id"].apply(len)
 
-# Función para calcular frecuencia media
+# ✅ Función corregida
 def calcular_frecuencia(horas):
-    if len(horas) < 2:
+    horas_limpias = [h for h in horas if h and h.strip()]
+    if len(horas_limpias) < 2:
         return "No disponible"
-    tiempos = [datetime.strptime(h, "%H:%M:%S") for h in horas]
-    diferencias = [(t2 - t1).seconds for t1, t2 in zip(tiempos, tiempos[1:])]
-    media = int(round(sum(differences) / len(differences) / 60))
-    return f"cada {media} minutos"
+    try:
+        tiempos = [datetime.strptime(h, "%H:%M:%S") for h in horas_limpias]
+        diferencias = [(t2 - t1).seconds for t1, t2 in zip(tiempos, tiempos[1:])]
+        media = int(round(sum(differences) / len(differences) / 60))
+        return f"cada {media} minutos"
+    except Exception:
+        return "Formato de hora no válido"
 
 # Mostrar recorridos
 for _, row in agrupado.iterrows():
@@ -100,14 +104,13 @@ for _, row in agrupado.iterrows():
         lon = parada["stop_lon"]
         nombre = parada["stop_name"]
 
-        # Recoger todos los horarios de paso por esa parada
+        # Horarios por parada
         horarios = feed.stop_times[
             (feed.stop_times["stop_id"] == stop_id) &
             (feed.stop_times["trip_id"].isin(row["trip_id"]))
         ]["departure_time"].tolist()
 
-        # Detectar si hay patrón
-        minutos = [int(h.split(":")[1]) for h in horarios]
+        minutos = [int(h.split(":")[1]) for h in horarios if h and h.strip()]
         patron = pd.Series(minutos).mode()
         if len(patron) >= 1 and minutos.count(patron[0]) > len(minutos) * 0.6:
             popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Paso aproximado: minuto {patron[0]:02d} de cada hora</span>"
@@ -117,15 +120,12 @@ for _, row in agrupado.iterrows():
             popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Horarios teóricos:<br/>{lineas}</span>"
 
         folium.CircleMarker(
-            location=[lat, lon],
-            radius=5,
-            color="darkred",
+            location=(lat, lon),
+            radius=4,
+            color="red",
             fill=True,
-            fill_color="red",
-            fill_opacity=0.9,
-            tooltip=nombre,
-            popup=folium.Popup(popup_text, max_width=250, max_height=150)
+            fill_opacity=0.7,
+            popup=folium.Popup(popup_text, max_width=300)
         ).add_to(mapa)
 
-    st_folium(mapa, width=750, height=450)
-    st.markdown("---")
+    st_folium(mapa, width=700, height=450)
