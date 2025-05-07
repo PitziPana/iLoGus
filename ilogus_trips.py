@@ -82,4 +82,55 @@ for _, row in agrupado.iterrows():
     horas = sorted(row["departure_time"])
     frecuencia = calcular_frecuencia(horas)
 
-    st.markdown(f"### 
+    st.markdown(f"### 🚌 Línea {route_short_name} · {destino}")
+    st.markdown(
+        f"📅 Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; "
+        f"🧭 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; "
+        f"⏱️ Frecuencia media: {frecuencia}"
+    )
+
+    filas = [horas[i:i+12] for i in range(0, len(horas), 12)]
+    html = "<table style='font-size:11px; text-align:center; border-spacing:4px;'>"
+    for fila in filas:
+        html += "<tr>" + "".join(f"<td>{h}</td>" for h in fila) + "</tr>"
+    html += "</table>"
+    st.markdown(html, unsafe_allow_html=True)
+
+    # Crear mapa
+    shape_df = feed.shapes[feed.shapes["shape_id"] == shape_id].sort_values("shape_pt_sequence")
+    coords = shape_df[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
+    mapa = folium.Map(location=coords[len(coords)//2], zoom_start=13)
+    folium.PolyLine(coords, color="blue", weight=4).add_to(mapa)
+
+    # Obtener paradas combinadas
+    todos_trips = row["trip_id"]
+    stops_usados = feed.stop_times[feed.stop_times["trip_id"].isin(todos_trips)]["stop_id"].unique()
+    paradas_ordenadas = feed.stop_times[feed.stop_times["trip_id"].isin(todos_trips)]
+    paradas_ordenadas = paradas_ordenadas.sort_values("stop_sequence")
+    stops_df = feed.stops[feed.stops["stop_id"].isin(stops_usados)].set_index("stop_id")
+
+    for stop_id in paradas_ordenadas["stop_id"].unique():
+        if stop_id in stops_df.index:
+            parada = stops_df.loc[stop_id]
+            lat, lon, nombre = parada["stop_lat"], parada["stop_lon"], parada["stop_name"]
+            horarios = feed.stop_times[(feed.stop_times["stop_id"] == stop_id) & (feed.stop_times["trip_id"].isin(todos_trips))]["departure_time"].tolist()
+
+            minutos = [int(h.split(":")[1]) for h in horarios if ":" in h]
+            patron = pd.Series(minutos).mode()
+            if len(patron) >= 1 and minutos.count(patron[0]) > len(minutos) * 0.6:
+                popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Paso aproximado: minuto {patron[0]:02d} de cada hora</span>"
+            else:
+                bloques = [horarios[i:i+6] for i in range(0, len(horarios), 6)]
+                lineas = "<br/>" + "<br/>".join(" • ".join(b) for b in bloques[:5])
+                popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Horarios teóricos:{lineas}</span>"
+
+            folium.CircleMarker(
+                location=(lat, lon),
+                radius=4,
+                color='red',
+                fill=True,
+                fill_opacity=0.8,
+                popup=folium.Popup(popup_text, max_width=250)
+            ).add_to(mapa)
+
+    st_folium(mapa, use_container_width=True)
