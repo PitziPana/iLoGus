@@ -60,12 +60,15 @@ agrupado["num_trips"] = agrupado["trip_id"].apply(len)
 
 # Frecuencia media
 def calcular_frecuencia(horas):
-    if len(horas) < 2:
+    try:
+        tiempos = [datetime.strptime(h, "%H:%M:%S") for h in horas if isinstance(h, str)]
+        if len(tiempos) < 2:
+            return "No disponible"
+        diferencias = [(t2 - t1).seconds for t1, t2 in zip(tiempos, tiempos[1:])]
+        media = int(round(sum(differences) / len(differences) / 60))
+        return f"cada {media} minutos"
+    except:
         return "No disponible"
-    tiempos = [datetime.strptime(h, "%H:%M:%S") for h in horas]
-    diferencias = [(t2 - t1).seconds for t1, t2 in zip(tiempos, tiempos[1:])]
-    media = int(round(sum(differences) / len(differences) / 60))
-    return f"cada {media} minutos"
 
 # Mostrar
 for _, row in agrupado.iterrows():
@@ -75,7 +78,7 @@ for _, row in agrupado.iterrows():
     frecuencia = calcular_frecuencia(horas)
 
     st.markdown(f"### 🚌 Línea {route_short_name} · {nombre_largo}")
-    st.markdown(f"📆 Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; 🧭 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; ⏱️ Frecuencia media: {frecuencia}")
+    st.markdown(f"📆 Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; 🤭 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; ⏱️ Frecuencia media: {frecuencia}")
 
     # Tabla sin scroll
     filas = [horas[i:i+12] for i in range(0, len(horas), 12)]
@@ -91,7 +94,7 @@ for _, row in agrupado.iterrows():
     mapa = folium.Map(location=coords[len(coords)//2], zoom_start=13)
     folium.PolyLine(coords, color="blue", weight=4).add_to(mapa)
 
-    # Paradas unificadas
+    # Paradas unificadas (todas las de todos los trips)
     trips_ids = row["trip_id"]
     stops_all = feed.stop_times[feed.stop_times["trip_id"].isin(trips_ids)]
     stops_all = stops_all.merge(feed.stops, on="stop_id")
@@ -109,7 +112,7 @@ for _, row in agrupado.iterrows():
         lon = parada["stop_lon"]
         horarios = parada["departure_time"]
 
-        minutos = [int(h.split(":")[1]) for h in horarios]
+        minutos = [int(h.split(":")[1]) for h in horarios if isinstance(h, str)]
         patron = pd.Series(minutos).mode()
         if len(patron) >= 1 and minutos.count(patron[0]) > len(minutos) * 0.6:
             popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Paso aproximado: minuto {patron[0]:02d} de cada hora</span>"
