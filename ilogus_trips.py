@@ -49,14 +49,11 @@ if dia_seleccionado != "Todo el periodo":
 # Primeras paradas
 primeras_paradas = feed.stop_times[feed.stop_times["stop_sequence"] == 1][["trip_id", "departure_time"]]
 trips_con_horario = trips_linea.merge(primeras_paradas, on="trip_id", how="left")
+trips_con_horario = trips_con_horario.dropna(subset=["departure_time"])
 
-# Agrupación por shape
-agrupado = trips_con_horario.groupby("shape_id").agg({
-    "trip_id": list,
-    "departure_time": list,
-    "trip_headsign": lambda x: x.mode().values[0] if not x.mode().empty else ""
-}).reset_index()
-agrupado["num_trips"] = agrupado["trip_id"].apply(len)
+# Extraer todos los trip_id y horas
+todos_trip_ids = trips_con_horario["trip_id"].tolist()
+horas = sorted(trips_con_horario["departure_time"].tolist())
 
 # Frecuencia media
 def calcular_frecuencia(horas):
@@ -65,69 +62,66 @@ def calcular_frecuencia(horas):
         if len(tiempos) < 2:
             return "No disponible"
         diferencias = [(t2 - t1).seconds for t1, t2 in zip(tiempos, tiempos[1:])]
-        media = int(round(sum(differences) / len(differences) / 60))
+        media = int(round(sum(diferencias) / len(diferencias) / 60))
         return f"cada {media} minutos"
     except:
         return "No disponible"
 
+frecuencia = calcular_frecuencia(horas)
+
 # Mostrar
-for _, row in agrupado.iterrows():
-    shape_id = row["shape_id"]
-    destino = row["trip_headsign"]
-    horas = sorted(row["departure_time"])
-    frecuencia = calcular_frecuencia(horas)
+st.markdown(f"### 🚌 Línea {route_short_name} · {nombre_largo}")
+st.markdown(f"🗓️ Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; 🫥 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; ⏱️ Frecuencia media: {frecuencia}")
 
-    st.markdown(f"### 🚌 Línea {route_short_name} · {nombre_largo}")
-    st.markdown(f"📆 Día: {dia_seleccionado} &nbsp;&nbsp;&nbsp;&nbsp; 🤭 {len(horas)} salidas programadas &nbsp;&nbsp;&nbsp;&nbsp; ⏱️ Frecuencia media: {frecuencia}")
+# Tabla sin scroll
+filas = [horas[i:i+12] for i in range(0, len(horas), 12)]
+html = "<table style='font-size:11px; text-align:center; border-spacing:4px;'>"
+for fila in filas:
+    html += "<tr>" + "".join(f"<td>{h}</td>" for h in fila) + "</tr>"
+html += "</table>"
+st.markdown(html, unsafe_allow_html=True)
 
-    # Tabla sin scroll
-    filas = [horas[i:i+12] for i in range(0, len(horas), 12)]
-    html = "<table style='font-size:11px; text-align:center; border-spacing:4px;'>"
-    for fila in filas:
-        html += "<tr>" + "".join(f"<td>{h}</td>" for h in fila) + "</tr>"
-    html += "</table>"
-    st.markdown(html, unsafe_allow_html=True)
+# Mapa general
+primer_trip_id = todos_trip_ids[0]
+shape_id = feed.trips[feed.trips["trip_id"] == primer_trip_id]["shape_id"].values[0]
+shape_df = feed.shapes[feed.shapes["shape_id"] == shape_id].sort_values("shape_pt_sequence")
+coords = shape_df[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
+mapa = folium.Map(location=coords[len(coords)//2], zoom_start=13)
+folium.PolyLine(coords, color="blue", weight=4).add_to(mapa)
 
-    # Mapa
-    shape_df = feed.shapes[feed.shapes["shape_id"] == shape_id].sort_values("shape_pt_sequence")
-    coords = shape_df[["shape_pt_lat", "shape_pt_lon"]].values.tolist()
-    mapa = folium.Map(location=coords[len(coords)//2], zoom_start=13)
-    folium.PolyLine(coords, color="blue", weight=4).add_to(mapa)
+# Paradas unificadas
+stops_all = feed.stop_times[feed.stop_times["trip_id"].isin(todos_trip_ids)]
+stops_all = stops_all.merge(feed.stops, on="stop_id")
+stops_ordenadas = stops_all.groupby("stop_id").agg({
+    "stop_sequence": "min",
+    "stop_name": "first",
+    "stop_lat": "first",
+    "stop_lon": "first",
+    "departure_time": list
+}).sort_values("stop_sequence").reset_index()
 
-    # Paradas unificadas (todas las de todos los trips)
-    trips_ids = row["trip_id"]
-    stops_all = feed.stop_times[feed.stop_times["trip_id"].isin(trips_ids)]
-    stops_all = stops_all.merge(feed.stops, on="stop_id")
-    stops_ordenadas = stops_all.groupby("stop_id").agg({
-        "stop_sequence": "min",
-        "stop_name": "first",
-        "stop_lat": "first",
-        "stop_lon": "first",
-        "departure_time": list
-    }).sort_values("stop_sequence").reset_index()
+for _, parada in stops_ordenadas.iterrows():
+    nombre = parada["stop_name"]
+    lat = parada["stop_lat"]
+    lon = parada["stop_lon"]
+    horarios = parada["departure_time"]
 
-    for _, parada in stops_ordenadas.iterrows():
-        nombre = parada["stop_name"]
-        lat = parada["stop_lat"]
-        lon = parada["stop_lon"]
-        horarios = parada["departure_time"]
+    minutos = [int(h.split(":")[1]) for h in horarios if isinstance(h, str)]
+    patron = pd.Series(minutos).mode()
+    if len(patron) >= 1 and minutos.count(patron[0]) > len(minutos) * 0.6:
+        popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Paso aproximado: minuto {patron[0]:02d} de cada hora</span>"
+    else:
+        bloques = [horarios[i:i+6] for i in range(0, len(horarios), 6)]
+        lineas = "<br/>".join(" • ".join(b) for b in bloques[:5])
+        popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Horarios teóricos:<br/>{lineas}</span>"
 
-        minutos = [int(h.split(":")[1]) for h in horarios if isinstance(h, str)]
-        patron = pd.Series(minutos).mode()
-        if len(patron) >= 1 and minutos.count(patron[0]) > len(minutos) * 0.6:
-            popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Paso aproximado: minuto {patron[0]:02d} de cada hora</span>"
-        else:
-            bloques = [horarios[i:i+6] for i in range(0, len(horarios), 6)]
-            lineas = "<br/>".join(" • ".join(b) for b in bloques[:5])
-            popup_text = f"<b>{nombre}</b><br/><span style='font-size:11px;'>🕒 Horarios teóricos:<br/>{lineas}</span>"
+    folium.CircleMarker(
+        location=(lat, lon),
+        radius=4,
+        fill=True,
+        color="darkred",
+        fill_opacity=0.8,
+        popup=folium.Popup(popup_text, max_width=300)
+    ).add_to(mapa)
 
-        folium.CircleMarker(
-            location=(lat, lon),
-            radius=4,
-            fill=True,
-            color="darkred",
-            fill_opacity=0.8,
-            popup=folium.Popup(popup_text, max_width=300)
-        ).add_to(mapa)
-
-    st_folium(mapa, width=700, height=480)
+st_folium(mapa, width=700, height=480)
